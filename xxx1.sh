@@ -16,16 +16,14 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # 更新源及安装必备工具
-echo "[1/8] 更新系统并安装依赖..."
+echo "[1/6] 更新系统并安装依赖..."
+export DEBIAN_FRONTEND=noninteractive
 apt update -y > /dev/null 2>&1
-apt install -y curl socat wget screen sudo iptables ufw net-tools > /dev/null 2>&1
+apt install -y curl wget screen net-tools -qq > /dev/null 2>&1
 echo "✓ 依赖安装完成"
 
-# 权限调整
-chmod 777 /root
-
 # 创建目录并进入
-echo "[2/8] 创建工作目录..."
+echo "[2/6] 创建工作目录..."
 cd ~
 rm -rf xmrig-proxy-deploy
 mkdir -p xmrig-proxy-deploy
@@ -33,12 +31,12 @@ cd xmrig-proxy-deploy
 echo "✓ 工作目录已创建"
 
 # 下载并解压 xmrig-proxy
-echo "[3/8] 下载 xmrig-proxy v6.24.0..."
+echo "[3/6] 下载 xmrig-proxy v6.24.0..."
 wget -q --show-progress https://github.com/xmrig/xmrig-proxy/releases/download/v6.24.0/xmrig-proxy-6.24.0-linux-static-x64.tar.gz
 echo "✓ 下载完成"
 
-echo "[4/8] 解压文件..."
-tar -zxf xmrig-proxy-6.24.0-linux-static-x64.tar.gz
+echo "[4/6] 解压文件..."
+tar -zxf xmrig-proxy-6.24.0-linux-static-x64.tar.gz > /dev/null 2>&1
 cd xmrig-proxy-6.24.0
 chmod +x xmrig-proxy
 echo "✓ 解压完成"
@@ -47,20 +45,8 @@ echo "✓ 解压完成"
 VERSION=$(./xmrig-proxy --version | head -n 1)
 echo "✓ $VERSION"
 
-# 配置防火墙
-echo "[5/8] 配置防火墙..."
-ufw --force reset > /dev/null 2>&1
-ufw default deny incoming > /dev/null 2>&1
-ufw default allow outgoing > /dev/null 2>&1
-ufw allow 22/tcp > /dev/null 2>&1
-ufw allow 7777/tcp > /dev/null 2>&1
-ufw allow 8181/tcp > /dev/null 2>&1
-ufw allow proto icmp > /dev/null 2>&1
-ufw --force enable > /dev/null 2>&1
-echo "✓ 防火墙配置完成"
-
-# 创建配置文件（直接内嵌，不从外部下载）
-echo "[6/8] 创建配置文件..."
+# 创建配置文件
+echo "[5/6] 创建配置文件..."
 rm -f config.json
 
 cat > config.json << 'CONFIGEOF'
@@ -113,34 +99,26 @@ CONFIGEOF
 
 echo "✓ 配置文件已创建"
 
-# 验证 JSON 格式
-echo "[7/8] 验证配置文件..."
-if command -v python3 &> /dev/null; then
-    if python3 -m json.tool config.json > /dev/null 2>&1; then
-        echo "✓ JSON 格式验证通过"
-    else
-        echo "✗ JSON 格式错误"
-        exit 1
-    fi
-fi
-
 # 提升文件句柄数限制
 ulimit -n 65535
 
 # 停止旧进程
+echo "[6/6] 启动 xmrig-proxy..."
 pkill -9 xmrig-proxy 2>/dev/null || true
 sleep 1
 
 # 启动 xmrig-proxy
-echo "[8/8] 启动 xmrig-proxy..."
 nohup ./xmrig-proxy > proxy.log 2>&1 &
 PROXY_PID=$!
+echo "  - 进程已启动 (PID: $PROXY_PID)"
 
 # 等待启动
+echo "  - 等待服务启动..."
 sleep 3
 
 # 检查进程
 if ps -p $PROXY_PID > /dev/null 2>&1; then
+    echo "✓ xmrig-proxy 启动成功"
     echo ""
     echo "=========================================="
     echo "  ✓ 安装成功！"
@@ -155,16 +133,24 @@ if ps -p $PROXY_PID > /dev/null 2>&1; then
     echo "矿机连接: $SERVER_IP:7777"
     echo "API 地址: http://$SERVER_IP:8181"
     echo ""
+    echo "⚠️  重要提示:"
+    echo "  请在云服务商控制台的安全组/防火墙中开放以下端口:"
+    echo "  - 7777 (矿机连接端口)"
+    echo "  - 8181 (API 端口，可选)"
+    echo ""
     echo "管理命令:"
     echo "  查看日志: tail -f $(pwd)/xmrig-proxy.log"
     echo "  查看进程: ps aux | grep xmrig-proxy | grep -v grep"
     echo "  停止服务: pkill xmrig-proxy"
+    echo "  重启服务: systemctl restart xmrig-proxy"
     echo ""
     echo "最新日志:"
     echo "----------------------------------------"
-    tail -n 20 xmrig-proxy.log 2>/dev/null || cat proxy.log 2>/dev/null || echo "日志尚未生成"
+    sleep 1
+    tail -n 20 xmrig-proxy.log 2>/dev/null || cat proxy.log 2>/dev/null || echo "日志正在生成中..."
     echo "----------------------------------------"
 else
+    echo "✗ xmrig-proxy 启动失败"
     echo ""
     echo "=========================================="
     echo "  ✗ 启动失败"
@@ -201,14 +187,14 @@ SERVICEEOF
 systemctl daemon-reload
 systemctl enable xmrig-proxy > /dev/null 2>&1
 
-echo "✓ Systemd 服务已创建"
+echo "✓ Systemd 服务已创建并启用"
 echo ""
 echo "Systemd 管理命令:"
-echo "  启动: systemctl start xmrig-proxy"
-echo "  停止: systemctl stop xmrig-proxy"
-echo "  重启: systemctl restart xmrig-proxy"
-echo "  状态: systemctl status xmrig-proxy"
-echo "  日志: journalctl -u xmrig-proxy -f"
+echo "  systemctl status xmrig-proxy   # 查看状态"
+echo "  systemctl restart xmrig-proxy  # 重启服务"
+echo "  systemctl stop xmrig-proxy     # 停止服务"
+echo "  systemctl start xmrig-proxy    # 启动服务"
+echo "  journalctl -u xmrig-proxy -f   # 查看日志"
 echo ""
 echo "=========================================="
 echo "  安装完成！"
