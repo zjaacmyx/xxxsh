@@ -2,23 +2,19 @@
 
 echo "========== 开始安装 xmrig-proxy v6.24.0 =========="
 
-# 更新源及安装必备工具
+# 安装依赖
 apt update -y
-apt install -y curl socat wget screen sudo iptables ufw python3
+apt install -y curl wget screen sudo iptables ufw python3
 
-# 权限调整
-chmod 777 /root
-
-# 创建目录并进入
+# 创建目录
 mkdir -p ~/xmrig-proxy-deploy
 cd ~/xmrig-proxy-deploy
 
-# 下载并解压 xmrig-proxy
+# 下载解压
 wget https://github.com/xmrig/xmrig-proxy/releases/download/v6.24.0/xmrig-proxy-6.24.0-linux-static-x64.tar.gz
 tar -zxvf xmrig-proxy-6.24.0-linux-static-x64.tar.gz
 cd xmrig-proxy-6.24.0
 
-# 赋予执行权限
 chmod +x xmrig-proxy
 
 # 配置防火墙
@@ -30,54 +26,61 @@ sudo ufw allow 7777/tcp
 sudo ufw allow 8181/tcp
 sudo ufw allow proto icmp
 sudo ufw --force enable
-sudo ufw status
 
-# 下载配置文件
+# 下载并清理配置文件
 rm -f config.json
 wget https://raw.githubusercontent.com/zjaacmyx/xxx1/main/config.json
 
-# 清理 JSON 注释（重要！）
+# 重要：清理 JSON 注释
+echo "清理配置文件注释..."
 python3 << 'PYEOF'
 import json
 import re
+
 try:
-    with open('config.json', 'r') as f:
+    with open('config.json', 'r', encoding='utf-8') as f:
         content = f.read()
-    content = re.sub(r'//.*', '', content)
+    
+    # 移除单行注释
+    content = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+    
+    # 移除多行注释
+    content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+    
+    # 解析并格式化
     config = json.loads(content)
-    with open('config.json', 'w') as f:
-        json.dump(config, f, indent=4)
-    print("✓ JSON 配置文件已清理")
+    
+    with open('config.json', 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+    
+    print("✓ 配置文件已清理")
 except Exception as e:
-    print(f"✗ 配置文件处理失败: {e}")
+    print(f"✗ 错误: {e}")
     exit(1)
 PYEOF
 
-# 显示配置
+# 验证 JSON
+python3 -m json.tool config.json > /dev/null || exit 1
+
 echo "配置文件内容:"
 cat config.json
 
-# 提升文件句柄数限制
+# 启动
 ulimit -n 65535
-
-# 后台启动
-echo "启动 xmrig-proxy..."
 nohup ./xmrig-proxy > proxy.log 2>&1 &
-PROXY_PID=$!
+PID=$!
 
-# 验证启动
 sleep 3
-if ps -p $PROXY_PID > /dev/null 2>&1; then
+
+if ps -p $PID > /dev/null 2>&1; then
     echo ""
-    echo "========== ✓ 安装成功 =========="
-    echo "PID: $PROXY_PID"
-    echo "日志: $(pwd)/xmrig-proxy.log"
-    echo "API: http://YOUR_IP:8181"
-    echo ""
-    tail -n 20 xmrig-proxy.log 2>/dev/null || cat proxy.log
+    echo "✓ 安装成功！"
+    echo "PID: $PID"
+    echo "日志: tail -f $(pwd)/xmrig-proxy.log"
+    tail -20 xmrig-proxy.log
 else
     echo ""
-    echo "========== ✗ 启动失败 =========="
-    cat proxy.log 2>/dev/null || cat xmrig-proxy.log 2>/dev/null
+    echo "✗ 启动失败"
+    cat proxy.log
     exit 1
 fi
